@@ -1,0 +1,33 @@
+{
+  "name": "fenced",
+  "version": "0.1.0",
+  "private": true,
+  "author": "Fabian Kübler (https://fabian-kuebler.com)",
+  "homepage": "https://fabian-kuebler.com",
+  "license": "MIT",
+  "packageManager": "bun@1.3.2",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "tmux split-window -h 'bun run dev:server' && bun run dev:client",
+    "dev:client": "bun --cwd=apps/client run dev",
+    "dev:server": "bun run --watch apps/server/index.ts",
+    "lint": "bun --cwd=apps/client run lint && bun --cwd=apps/server run lint",
+    "build": "bun --cwd=apps/client vite build",
+    "google:renew-token": "bun run ./packages/skills/src/google-auth/renew-token.ts",
+    "google:test-auth": "bun run ./packages/skills/src/google-auth/test-auth.ts"
+  },
+  "module": "index.ts",
+  "type": "module",
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "bun-streaming-exec": "^0.1.1"
+  },
+  "peerDependencies": {
+    "typescript": "^5.9.3"
+  }
+}

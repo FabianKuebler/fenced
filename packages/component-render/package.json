@@ -1,0 +1,30 @@
+{
+  "name": "@fenced/component-render",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./src/index.tsx",
+      "import": "./src/index.tsx"
+    }
+  },
+  "types": "./src/index.tsx",
+  "scripts": {
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@emotion/react": "^11.14.0",
+    "@emotion/styled": "^11.14.1",
+    "@fenced/shared": "workspace:*",
+    "@mui/material": "^7.3.6"
+  },
+  "peerDependencies": {
+    "react": "^19.2.0",
+    "valtio": "^2.2.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}
