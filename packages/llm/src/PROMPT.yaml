@@ -46,6 +46,7 @@ messages:
       - Manage server-visible state with `const data = new Data({...})` and mutate it directly (`data.progress = 40`, `data.rows.push(row)`); Valtio mutation events stream automatically to the mounted UI.
       - Mount UI panels via `const comp = mount({ data, streamedData, outputSchema, callbacks, ui })`.
         - `ui` receives `({ data, streamedData, output, callbacks })`. `data` reflects server mutations; `streamedData` only updates via `json agent.data` blocks targeting that StreamedData's id.
+        - For complex UIs, use `<Slot>` in the `ui` function and fill them via `comp.mountSlot(name, uiFn)` for progressive rendering.
         - `streamedData` (optional) is a `StreamedData` instance created via `new StreamedData("<id>")` that can receive streamed JSON updates.
         - `callbacks` (optional) defines server-side functions the UI can invoke (fire-and-forget, no return value).
         - Model user input with `z` schemas and `await comp.result` to pause until submit. Handle validation/success feedback via console logs or UI state.
@@ -137,6 +138,7 @@ messages:
       type MountedComponent<TOutput> = {
         mountId: string;
         result: Promise<TOutput>;  // resolves on valid form submit
+        mountSlot: (name: string, ui: (props: { data; streamedData; output; callbacks }) => JSX) => void;
       };
 
       function mount<TData, TStreamedData, TOutput, TCallbacks>(
@@ -172,8 +174,40 @@ messages:
       console.info("survey:submit", { feedback, votes: data.count });
       ```
 
+      ### `Slot` — progressive rendering for complex UIs
+
+      Use `<Slot>` inside a mount's `ui` to define named placeholders that get filled later via `shell.mountSlot()`. Each slot fill is a separate statement, so the UI renders progressively as the code streams.
+
+      ```tsx
+      const shell = mount({
+        data,
+        outputSchema: z.object({ name: z.string() }),
+        ui: ({ data }) => (
+          <Card sx=\{{ p: 2 }}>
+            <Typography variant="h5">{data.title}</Typography>
+            <Slot name="form" fallback={<Skeleton variant="rectangular" height={120} />} />
+            <Slot name="actions" />
+          </Card>
+        ),
+      });
+
+      // Each slot() call is a small statement — executes as soon as it's generated
+      shell.mountSlot("form", ({ output }) => (
+        <TextField {...output.name} label="Project name" fullWidth />
+      ));
+
+      shell.mountSlot("actions", ({ output }) => (
+        <Button type="submit" variant="contained" {...output}>Create</Button>
+      ));
+      ```
+
+      - `<Slot name="..." fallback={...} />` renders the fallback until filled, then swaps to the slot content
+      - Slot ui functions receive the **same props** as the parent mount (`data`, `streamedData`, `output`, `callbacks`)
+      - Use slots when the UI is large — the shell with skeletons appears instantly, content fills in progressively
+      - For simple UIs, just use `mount()` directly without slots
+
       ### UI components
-      - All MUI components are available as globals (`Box`, `Card`, `Typography`, `TextField`, `Button`, `Select`, `MenuItem`, `Checkbox`, `LinearProgress`, `List`, `ListItem`, `ListItemText`, `Alert`, `Stack`, `Grid`, etc.). No imports needed.
+      - All MUI components are available as globals (`Box`, `Card`, `Typography`, `TextField`, `Button`, `Select`, `MenuItem`, `Checkbox`, `LinearProgress`, `List`, `ListItem`, `ListItemText`, `Alert`, `Stack`, `Grid`, `Skeleton`, etc.). `Slot` is also available for progressive rendering. No imports needed.
       - Use `<Box component="form">` for forms and spread `{...output}` on the submit button: `<Button type="submit" {...output}>Submit</Button>`
       - The `output` binder provides `onSubmit`, `onClick`, and `disabled` props for form submission
       - Wire inputs through `output.*`: `<TextField {...output.name} label="Name" />`

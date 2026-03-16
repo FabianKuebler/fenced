@@ -3,6 +3,7 @@ import {
   parseClientEnvelope,
   type CallbackInvokePayload,
   type ClientToServerEnvelope,
+  type RecordingActionDonePayload,
   type UiSubmitPayload,
   type UserMessagePayload
 } from "@fenced/shared";
@@ -64,6 +65,7 @@ await Runtime.loadSkills();
 
 const server = Bun.serve<ServerSocketContext>({
   port: API_PORT,
+  hostname: "0.0.0.0",
   fetch(request, server) {
     if (request.method === "OPTIONS") {
       return new Response(null, { headers: corsHeaders });
@@ -170,6 +172,9 @@ async function handleClientEnvelope(
       case "callback_invoke":
         handleCallbackInvoke(ws, envelope.payload);
         return;
+      case "recording_action_done":
+        handleRecordingActionDone(channel, envelope.payload);
+        return;
       case "client_log":
         channel.log({
           lvl: envelope.payload.lvl,
@@ -215,6 +220,10 @@ function handleUiSubmit(channel: WebSocketChannel, payload: UiSubmitPayload) {
     msg: "Received UI submission",
     data: { mountId: payload.mountId },
   });
+}
+
+function handleRecordingActionDone(channel: WebSocketChannel, payload: RecordingActionDonePayload) {
+  channel.resolveRecordingActionDone(payload);
 }
 
 function handleCallbackInvoke(

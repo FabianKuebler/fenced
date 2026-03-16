@@ -167,15 +167,14 @@ export class Runtime {
       const content = await file.text();
       // Stream character by character to simulate LLM streaming
       const chunkSize = 5;
-      let halfSpeed = false;
+      let slow = false;
       for (let i = 0; i < content.length; i += chunkSize) {
         const chunk = content.slice(i, i + chunkSize);
         if (chunk.includes("\u200B")) {
-          halfSpeed = true;
+          slow = !slow;
         }
         yield { text: chunk };
-        // Small delay to simulate streaming (half speed after \u200B)
-        await new Promise((resolve) => setTimeout(resolve, halfSpeed ? 30 : 3));
+        await new Promise((resolve) => setTimeout(resolve, slow ? 80 : 1));
       }
     })();
   }
@@ -188,6 +187,7 @@ export class Runtime {
     let transcript: LlmLogsPayload = {};
     const pendingStreams: Promise<unknown>[] = [];
     let pendingExecution: Promise<ExecutionResult> | null = null;
+    let pendingRecordingAction: Promise<void> | null = null;
 
     this.channel.sendAssistantMessage?.({
       interactionId,
@@ -202,6 +202,12 @@ export class Runtime {
 
     for await (const segment of parse(toParserChunks(tappedStream))) {
       console.log("[runtime] segment", { kind: segment.kind });
+
+      // Await pending recording action before processing any subsequent segment
+      if (pendingRecordingAction) {
+        await pendingRecordingAction;
+        pendingRecordingAction = null;
+      }
 
       // Await prior execution before processing the next agent_run block
       // (by the time we receive the next segment, the prior block's stream is closed)
@@ -259,6 +265,27 @@ export class Runtime {
           );
           break;
         }
+        case "recording_action": {
+          if (!this.recordingPath) {
+            // Skip recording actions outside recording mode
+            for await (const _ of segment.sourceTokens) { /* drain */ }
+            break;
+          }
+          // Collect in background so the parser can continue driving the stream.
+          // Awaited at the top of the next loop iteration before any subsequent segment.
+          pendingRecordingAction = (async () => {
+            const chunks: string[] = [];
+            for await (const chunk of segment.sourceTokens) {
+              chunks.push(chunk);
+            }
+            const source = chunks.join("").trim();
+            if (source && this.channel.sendRecordingAction) {
+              const actionId = crypto.randomUUID();
+              await this.channel.sendRecordingAction(actionId, source);
+            }
+          })();
+          break;
+        }
         case "agent_run": {
           // Ensure any prior streams are awaited before executing code.
           if (pendingStreams.length) {
@@ -289,6 +316,11 @@ export class Runtime {
       if (this.stopped) {
         break;
       }
+    }
+
+    // Await final recording action if any
+    if (pendingRecordingAction) {
+      await pendingRecordingAction;
     }
 
     // Await final execution if any

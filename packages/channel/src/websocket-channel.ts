@@ -12,6 +12,8 @@ import {
   type MarkdownChunkPayload,
   type MessageId,
   type MountPayload,
+  type MountSlotPayload,
+  type RecordingActionDonePayload,
   type SessionPayload,
   type ServerToClientEnvelope,
   type StreamedDataId,
@@ -34,7 +36,9 @@ export interface RuntimeChannel {
   sendMarkdown(context: MarkdownStreamContext, stream: AsyncIterable<string>): Promise<void>;
   sendStreamedData(streamedDataId: StreamedDataId, stream: AsyncIterable<string>): Promise<void>;
   sendMount(event: MountPayload): Promise<unknown>;
+  sendMountSlot(event: MountSlotPayload): void;
   sendDataPatch(event: DataPatchPayload): void;
+  sendRecordingAction?(actionId: string, source: string): Promise<void>;
   sendTrace?(payload: TracePayload): void;
   log(line: LogLine): void;
   shutdown(reason?: unknown): void;
@@ -106,8 +110,27 @@ export class WebSocketChannel implements RuntimeChannel {
     });
   }
 
+  sendMountSlot(event: MountSlotPayload): void {
+    this.send({ type: "mount_slot", payload: event });
+  }
+
   sendDataPatch(event: DataPatchPayload): void {
     this.send({ type: "data_patch", payload: event });
+  }
+
+  sendRecordingAction(actionId: string, source: string): Promise<void> {
+    this.send({ type: "recording_action", payload: { actionId, source } });
+    return new Promise<void>((resolve) => {
+      this.pendingResults.set(`recording:${actionId}`, () => resolve());
+    });
+  }
+
+  resolveRecordingActionDone(payload: RecordingActionDonePayload): void {
+    const key = `recording:${payload.actionId}`;
+    const resolver = this.pendingResults.get(key);
+    if (!resolver) return;
+    this.pendingResults.delete(key);
+    resolver(undefined);
   }
 
   log(line: LogLine): void {

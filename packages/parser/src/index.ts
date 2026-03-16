@@ -19,7 +19,12 @@ export type AgentDataSegment = {
   jsonTokens: AsyncIterable<string>;
 };
 
-export type ParserSegment = MarkdownSegment | AgentRunSegment | AgentDataSegment;
+export type RecordingActionSegment = {
+  kind: 'recording_action';
+  sourceTokens: AsyncIterable<string>;
+};
+
+export type ParserSegment = MarkdownSegment | AgentRunSegment | AgentDataSegment | RecordingActionSegment;
 
 export type TextChunk = {
   text: string;
@@ -44,11 +49,13 @@ type TokenStream = {
 
 type BlockInfo =
   | { kind: 'agent_run'; headerSource: string }
-  | { kind: 'agent_data'; streamedDataId: string };
+  | { kind: 'agent_data'; streamedDataId: string }
+  | { kind: 'recording_action' };
 
 type ActiveBlock =
   | { kind: 'agent_run'; index: number; stream: TokenStream; headerSource: string; lastNonWhitespaceChar?: string }
   | { kind: 'agent_data'; stream: TokenStream }
+  | { kind: 'recording_action'; stream: TokenStream }
   | { kind: 'passthrough'; stream: TokenStream };
 
 class SegmentParser {
@@ -205,6 +212,9 @@ class SegmentParser {
     if (dataMatch) {
       return { kind: 'agent_data', streamedDataId: dataMatch };
     }
+    if (isRecordingActionHeader(header)) {
+      return { kind: 'recording_action' };
+    }
     return undefined;
   }
 
@@ -221,6 +231,15 @@ class SegmentParser {
       return {
         kind: 'agent_run',
         index,
+        sourceTokens: stream.iterator,
+      };
+    }
+
+    if (info.kind === 'recording_action') {
+      const stream = createTokenStream();
+      this.activeBlock = { kind: 'recording_action', stream };
+      return {
+        kind: 'recording_action',
         sourceTokens: stream.iterator,
       };
     }
@@ -245,6 +264,8 @@ class SegmentParser {
       case 'agent_run':
         return this.consumeAgentRunBlock(block, final);
       case 'agent_data':
+        return this.consumeAgentDataBlock(block, final);
+      case 'recording_action':
         return this.consumeAgentDataBlock(block, final);
       case 'passthrough':
         return this.consumePassthroughBlock(block, final);
@@ -300,7 +321,7 @@ class SegmentParser {
   }
 
   private consumeAgentDataBlock(
-    block: Extract<ActiveBlock, { kind: 'agent_data' }>,
+    block: Extract<ActiveBlock, { kind: 'agent_data' }> | Extract<ActiveBlock, { kind: 'recording_action' }>,
     final: boolean,
   ): { progressed: boolean } {
     const closeIdx = this.buffer.indexOf(FENCE);
@@ -416,6 +437,10 @@ function createTokenStream(): TokenStream {
 
 function isAgentRunHeader(header: string): boolean {
   return header.toLowerCase() === 'tsx agent.run';
+}
+
+function isRecordingActionHeader(header: string): boolean {
+  return header.toLowerCase() === 'js recording.action';
 }
 
 function matchAgentDataHeader(header: string): string | undefined {

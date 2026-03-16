@@ -24,6 +24,7 @@
   flex: 0 0 45%;
   min-width: 280px;
   max-height: calc(100vh - 32px);
+  overflow: hidden;
 }
 
 .pane-header {
@@ -411,3 +412,79 @@ button:disabled {
     transform: translateY(0);
   }
 }
+
+/* ── Recording mode ── */
+
+:root:has(body.recording-mode) {
+  background-color: #ffffff;
+  height: 842px;
+}
+
+body.recording-mode {
+  background: #ffffff;
+  width: 884px;
+  height: 842px;
+  overflow: hidden;
+}
+
+.layout.recording-mode {
+  padding: 0;
+  background: #ffffff;
+  height: 842px;
+  min-height: 842px;
+}
+
+.layout.recording-mode .debug-pane {
+  max-height: 100vh;
+}
+
+.layout.recording-mode .pane {
+  box-shadow: none;
+  padding: 0;
+  border: none;
+  gap: 0;
+}
+
+.layout.recording-mode .chat-panel {
+  padding: 0;
+}
+
+.layout.recording-mode .messages {
+  padding: 0;
+  scrollbar-width: none;
+}
+
+.layout.recording-mode .debug-pane {
+  flex: 1;
+  border: 1px solid darkgray;
+  border-radius: 0.25rem;
+  overflow: hidden;
+}
+
+.layout.recording-mode .chat-pane {
+  flex: 1;
+}
+
+.layout.recording-mode .token-log {
+  scrollbar-width: none;
+  border: none;
+  border-radius: 0;
+  background: #ffffff;
+  color: rgb(91, 33, 182);
+}
+
+.layout.recording-mode .token-log-header {
+  padding: 0.15rem 0.75rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: rgb(91, 33, 182);
+  background: rgb(237, 233, 254);
+  position: sticky;
+  top: -12px;
+  margin: -12px -12px 8px;
+  z-index: 1;
+}
+

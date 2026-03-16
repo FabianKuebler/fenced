@@ -1,6 +1,6 @@
 import type { RuntimeChannel } from ".";
 import { Data, StreamedData } from "./data-manager";
-import type { JsonSchema, MountPayload } from "@fenced/shared";
+import type { JsonSchema, MountPayload, MountSlotPayload } from "@fenced/shared";
 import { z } from "zod";
 
 export type CallbackFn = (...args: unknown[]) => void;
@@ -26,9 +26,12 @@ export type MountOptions<
   ui: (props: MountUiProps<TData, TStreamedData, TOutput, TCallbacks>) => unknown;
 };
 
+export type SlotUiFn = (props: MountUiProps<unknown, unknown, unknown, unknown>) => unknown;
+
 export type MountedComponent<TOutput> = {
   mountId: string;
   result: Promise<TOutput>;
+  mountSlot: (name: string, ui: SlotUiFn) => void;
 };
 
 export class MountManager {
@@ -117,15 +120,20 @@ export class MountManager {
     // sendMount returns a Promise that resolves when ui_submit is received
     const resultPromise = this.channel.sendMount?.(payload) ?? Promise.resolve(undefined);
 
+    const mountSlot = (name: string, ui: SlotUiFn): void => {
+      const uiSource = this.transpileUi(ui);
+      const slotPayload: MountSlotPayload = { mountId, slotName: name, uiSource };
+      this.channel.sendMountSlot?.(slotPayload);
+    };
+
     return {
       mountId,
       result: resultPromise as Promise<TOutput>,
+      mountSlot,
     };
   }
 
-  private transpileUi<TData, TStreamedData, TOutput, TCallbacks extends CallbacksMap>(
-    ui: MountOptions<TData, TStreamedData, TOutput, TCallbacks>["ui"],
-  ): string {
+  private transpileUi(ui: { toString(): string }): string {
     const source = `export default ${ui.toString()};`;
     const transformed = this.transpiler.transformSync(source);
     return transformed

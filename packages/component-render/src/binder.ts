@@ -8,6 +8,7 @@ import type { JsonSchema } from "@fenced/shared";
 type BaseBinder = {
   error: boolean;
   helperText: string | undefined;
+  _touched: boolean;
   _setError: (message: string | undefined) => void;
 };
 
@@ -235,7 +236,9 @@ function createStringBinder(
     value: defaultVal,
     error: false,
     helperText: undefined,
+    _touched: false,
     onChange(eventOrValue) {
+      binder._touched = true;
       binder.value = extractStringValue(eventOrValue);
       // Live validation
       const validationError = validateString(binder.value, schema);
@@ -270,7 +273,9 @@ function createNumberBinder(
     _numericValue: defaultNum,
     error: false,
     helperText: undefined,
+    _touched: false,
     onChange(eventOrValue) {
+      binder._touched = true;
       const { str, num } = extractNumberValue(eventOrValue);
       binder.value = str;
       binder._numericValue = num;
@@ -306,7 +311,9 @@ function createBooleanBinder(
     checked: defaultVal,
     error: false,
     helperText: undefined,
+    _touched: false,
     onChange(eventOrValue) {
+      binder._touched = true;
       binder.checked = extractBooleanValue(eventOrValue);
       binder.error = false;
       binder.helperText = undefined;
@@ -342,7 +349,9 @@ function createEnumBinder(
     options,
     error: false,
     helperText: undefined,
+    _touched: false,
     onChange(eventOrValue) {
+      binder._touched = true;
       binder.value = extractStringValue(eventOrValue);
       binder.error = false;
       binder.helperText = undefined;
@@ -374,7 +383,9 @@ function createDateBinder(
     value: defaultVal,
     error: false,
     helperText: undefined,
+    _touched: false,
     onChange(eventOrValue) {
+      binder._touched = true;
       binder.value = extractStringValue(eventOrValue);
       binder.error = false;
       binder.helperText = undefined;
@@ -407,6 +418,7 @@ function createArrayBinder(
     items: defaultItems.map((item) => buildBinderInternal(itemSchema, context, item)),
     error: false,
     helperText: undefined,
+    _touched: false,
     get value() {
       return binder.items.map((item) => getBinderValue(item));
     },
@@ -487,6 +499,7 @@ function createObjectBinder(
     _kind: "object",
     error: false,
     helperText: undefined,
+    _touched: false,
     get value() {
       const result: Record<string, unknown> = {};
       for (const key of Object.keys(properties)) {
@@ -547,6 +560,57 @@ export function getBinderValue(binder: OutputBinder): unknown {
       return binder.value;
     default:
       return undefined;
+  }
+}
+
+// ============================================================================
+// Seeding from external data (e.g. StreamedData)
+// ============================================================================
+
+/**
+ * Seed untouched binder fields from an external data source.
+ * Only sets values on scalar binders that haven't been manually edited.
+ */
+export function seedBinderValues(
+  binder: OutputBinder,
+  data: Record<string, unknown>,
+): void {
+  if (binder._kind !== "object") return;
+
+  for (const [key, value] of Object.entries(data)) {
+    if (isReservedKey(key)) continue;
+    const child = (binder as ObjectBinder)[key] as OutputBinder | undefined;
+    if (!child || typeof child !== "object" || !("_kind" in child)) continue;
+    if (child._touched) continue;
+
+    switch (child._kind) {
+      case "string":
+        if (typeof value === "string" && value !== child.value) {
+          child.value = value;
+        }
+        break;
+      case "number":
+        if (typeof value === "number") {
+          (child as NumberBinder).value = String(value);
+          (child as NumberBinder)._numericValue = value;
+        }
+        break;
+      case "boolean":
+        if (typeof value === "boolean") {
+          (child as BooleanBinder).checked = value;
+        }
+        break;
+      case "enum":
+        if (typeof value === "string" && value !== child.value) {
+          child.value = value;
+        }
+        break;
+      case "date":
+        if (typeof value === "string" && value !== (child as DateBinder).value) {
+          (child as DateBinder).value = value;
+        }
+        break;
+    }
   }
 }
 

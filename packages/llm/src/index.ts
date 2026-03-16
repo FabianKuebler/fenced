@@ -124,7 +124,7 @@ function cloneMessages(messages: ChatMessage[]): ChatMessage[] {
   return messages.map((message) => ({ ...message }));
 }
 
-const DEFAULT_MODEL = 'gpt-5.2';
+const DEFAULT_MODEL = 'gpt-5.4';
 
 export async function createDefaultLlm(options: CreateDefaultLlmOptions): Promise<Llm> {
   const model = options.model ?? DEFAULT_MODEL;

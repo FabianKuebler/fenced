@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ChatComposer } from "./ChatComposer";
+import { ChatComposer, type ChatComposerHandle } from "./ChatComposer";
+import { RecordingCursor, type RecordingCursorHandle } from "./RecordingCursor";
+import { executeRecordingAction } from "./recording-action";
 import { ComponentRender } from "@fenced/component-render";
 import { parse as parseJsonStream } from "jsonriver";
 import {
@@ -12,7 +14,9 @@ import {
   type TraceCategory,
   type MarkdownChunkPayload,
   type MountPayload,
+  type MountSlotPayload,
   type JsonSchema,
+  type RecordingActionPayload,
   type ServerToClientEnvelope,
   type SessionPayload,
 } from "@fenced/shared";
@@ -39,6 +43,7 @@ type MountInstance = {
   streamedData?: Record<string, unknown> | null;
   outputSchema: JsonSchema;
   callbackNames?: string[];
+  slots: Record<string, string>;
   seq: number;
 };
 
@@ -52,6 +57,14 @@ type TraceEntry = {
   text: string;
   category: TraceCategory;
 };
+
+declare global {
+  interface Window {
+    obsstudio?: { stopRecording: () => void };
+  }
+}
+
+const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 
 const STREAM_IDLE_MS = 900;
 const RECONNECT_DELAY_MS = 1200;
@@ -76,12 +89,21 @@ const resolveSocketCandidates = () => {
 };
 
 function App() {
+  // Recording mode
+  const [recordingMode] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    return {
+      active: params.has("recording"),
+      question: params.get("recording")?.trim() || undefined,
+    };
+  });
+
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>("connecting");
   const [session, setSession] = useState<SessionPayload | null>(null);
   const seqRef = useRef(0);
   const nextSeq = () => ++seqRef.current;
 
-  const [messages, setMessages] = useState<Message[]>([
+  const [messages, setMessages] = useState<Message[]>(recordingMode.active ? [] : [
     {
       id: createId("assistant"),
       role: "assistant",
@@ -109,6 +131,11 @@ function App() {
   const mountedRef = useRef(true);
   const messageIdleTimersRef = useRef<Map<string, number>>(new Map());
   const jsonStreamsRef = useRef<Map<string, JsonStreamController>>(new Map());
+
+  const composerRef = useRef<ChatComposerHandle>(null);
+  const cursorRef = useRef<RecordingCursorHandle>(null);
+  const recordingStartedRef = useRef(false);
+  const wasStreamingRef = useRef(false);
 
   const markStreamActivity = useCallback(() => {
     setIsStreaming(true);
@@ -197,6 +224,7 @@ function App() {
         streamedData: null,
         outputSchema: payload.outputSchema,
         callbackNames: payload.callbackNames,
+        slots: existingIndex === -1 ? {} : prev[existingIndex].slots,
         seq: existingIndex === -1 ? nextSeq() : prev[existingIndex].seq,
       };
 
@@ -208,6 +236,17 @@ function App() {
       copy[existingIndex] = nextMount;
       return copy;
     });
+  }, []);
+
+  const handleMountSlot = useCallback((payload: MountSlotPayload) => {
+    if (!payload.mountId || !payload.slotName || !payload.uiSource) return;
+    setMounts((prev) =>
+      prev.map((mount) =>
+        mount.mountId === payload.mountId
+          ? { ...mount, slots: { ...mount.slots, [payload.slotName]: payload.uiSource } }
+          : mount,
+      ),
+    );
   }, []);
 
   const startStreamedDataStream = useCallback(
@@ -286,6 +325,22 @@ function App() {
     );
   }, []);
 
+  const handleRecordingAction = useCallback(async (payload: RecordingActionPayload) => {
+    try {
+      await executeRecordingAction(payload.source, { cursorRef, composerRef });
+    } catch (error) {
+      console.error("[recording.action] failed", error);
+    }
+    // Send ack
+    const socket = socketRef.current;
+    if (socket?.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({
+        type: "recording_action_done",
+        payload: { actionId: payload.actionId },
+      }));
+    }
+  }, []);
+
   const handleServerEnvelope = useCallback(
     (raw: unknown) => {
       const envelope = parseServerEnvelope(raw);
@@ -305,6 +360,9 @@ function App() {
         case "mount":
           handleMount(envelope.payload);
           return;
+        case "mount_slot":
+          handleMountSlot(envelope.payload);
+          return;
         case "streamed_data_reset":
           handleStreamedDataReset(envelope.payload);
           return;
@@ -317,6 +375,9 @@ function App() {
         case "trace":
           handleTrace(envelope.payload);
           return;
+        case "recording_action":
+          handleRecordingAction(envelope.payload);
+          return;
         case "log_line":
           console.debug("[server log]", envelope.payload);
           return;
@@ -324,7 +385,7 @@ function App() {
           return;
       }
     },
-    [handleTrace, handleMarkdownChunk, handleMount, handleStreamedDataReset, handleStreamedDataChunk, handleDataPatch],
+    [handleTrace, handleMarkdownChunk, handleMount, handleMountSlot, handleStreamedDataReset, handleStreamedDataChunk, handleDataPatch, handleRecordingAction],
   );
 
   const connectSocket = useCallback(() => {
@@ -429,13 +490,71 @@ function App() {
   }, [traceEntries]);
 
   const handleTokenLogScroll = useCallback(() => {
-    if (isProgrammaticScrollRef.current) return;
+    if (isProgrammaticScrollRef.current || recordingMode.active) return;
     const node = tokenLogRef.current;
     if (!node) return;
     const threshold = 50;
     const isNearBottom = node.scrollHeight - node.scrollTop - node.clientHeight < threshold;
     tokenLogAutoScrollRef.current = isNearBottom;
-  }, []);
+  }, [recordingMode.active]);
+
+  // ── Recording mode effects ──
+
+  useEffect(() => {
+    if (recordingMode.active) {
+      document.body.classList.add("recording-mode");
+      return () => { document.body.classList.remove("recording-mode"); };
+    }
+  }, [recordingMode.active]);
+
+  useEffect(() => {
+    if (!recordingMode.active || connectionStatus !== "open" || recordingStartedRef.current) return;
+
+    const runRecordingSequence = async () => {
+      if (recordingStartedRef.current) return;
+      recordingStartedRef.current = true;
+
+      if (!recordingMode.question) return;
+
+      await sleep(800);
+      for (const char of recordingMode.question) {
+        composerRef.current?.typeChar(char);
+        await sleep(45 + Math.random() * 35);
+      }
+      await sleep(500);
+      composerRef.current?.submit();
+    };
+
+    // OBS browser source: wait for recording start event
+    // Regular browser: auto-start after connection
+    if (window.obsstudio) {
+      const handler = () => runRecordingSequence();
+      window.addEventListener("obsRecordingStarted", handler);
+      return () => window.removeEventListener("obsRecordingStarted", handler);
+    } else {
+      runRecordingSequence();
+    }
+  }, [recordingMode, connectionStatus]);
+
+  // Expose streaming state for external recorders (Playwright)
+  useEffect(() => {
+    if (recordingMode.active) {
+      (window as any).__fenced_streaming = isStreaming;
+    }
+  }, [isStreaming, recordingMode.active]);
+
+  // Stop OBS recording when interaction ends
+  useEffect(() => {
+    if (!recordingMode.active) return;
+    if (isStreaming) {
+      wasStreamingRef.current = true;
+    } else if (wasStreamingRef.current && recordingStartedRef.current) {
+      wasStreamingRef.current = false;
+      if (window.obsstudio) {
+        setTimeout(() => window.obsstudio?.stopRecording(), 2500);
+      }
+    }
+  }, [isStreaming, recordingMode.active]);
 
   const handleCopyTokens = useCallback(() => {
     if (!traceEntries.length) return;
@@ -469,27 +588,30 @@ function App() {
   };
 
   return (
-    <div className="layout">
+    <div className={`layout${recordingMode.active ? " recording-mode" : ""}`}>
       <section className="pane debug-pane">
-        <div className="pane-header">
-          <div className="status-line">
-            <span className={`status-dot status-${connectionStatus}`} />
-            <div className="status-copy">
-              <div className="status-label">{connectionLabel[connectionStatus]}</div>
+        {!recordingMode.active && (
+          <div className="pane-header">
+            <div className="status-line">
+              <span className={`status-dot status-${connectionStatus}`} />
+              <div className="status-copy">
+                <div className="status-label">{connectionLabel[connectionStatus]}</div>
+              </div>
             </div>
+            {traceEntries.length > 0 && (
+              <button
+                type="button"
+                className="copy-button"
+                onClick={handleCopyTokens}
+                title="Copy tokens to clipboard"
+              >
+                {tokensCopied ? "Copied!" : "Copy"}
+              </button>
+            )}
           </div>
-          {traceEntries.length > 0 && (
-            <button
-              type="button"
-              className="copy-button"
-              onClick={handleCopyTokens}
-              title="Copy tokens to clipboard"
-            >
-              {tokensCopied ? "Copied!" : "Copy"}
-            </button>
-          )}
-        </div>
+        )}
         <div className="token-log" ref={tokenLogRef} onScroll={handleTokenLogScroll}>
+          {recordingMode.active && <div className="token-log-header">LLM Output</div>}
           {traceEntries.length > 0 ? (
             groupTraceEntries(traceEntries).map((group) => (
               <div key={group.key} className={`trace-${group.category}`}>
@@ -540,6 +662,7 @@ function App() {
                           streamedData={entry.item.streamedData ?? {}}
                           outputSchema={entry.item.outputSchema}
                           callbackNames={entry.item.callbackNames}
+                          slots={entry.item.slots}
                           onSubmit={(value) => {
                             const socket = socketRef.current;
                             const mountId = entry.item.mountId;
@@ -572,12 +695,15 @@ function App() {
             </div>
 
             <ChatComposer
+              ref={composerRef}
               onSubmit={handleSubmit}
               disabled={isStreaming || connectionStatus !== "open"}
             />
           </section>
         </div>
       </div>
+
+      {recordingMode.active && <RecordingCursor ref={cursorRef} />}
     </div>
   );
 }

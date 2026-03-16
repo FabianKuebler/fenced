@@ -96,9 +96,24 @@ export type MountPayload = {
   callbackNames?: string[];
 };
 
+export type MountSlotPayload = {
+  mountId: string;
+  slotName: string;
+  uiSource: string;
+};
+
 export type DataPatchPayload = {
   mountId: string;
   patches: DataPatch[];
+};
+
+export type RecordingActionPayload = {
+  actionId: string;
+  source: string;
+};
+
+export type RecordingActionDonePayload = {
+  actionId: string;
 };
 
 export type ServerToClientEnvelope =
@@ -108,9 +123,11 @@ export type ServerToClientEnvelope =
   | { type: "streamed_data_reset"; payload: StreamedDataResetPayload }
   | { type: "streamed_data_chunk"; payload: StreamedDataChunkPayload }
   | { type: "mount"; payload: MountPayload }
+  | { type: "mount_slot"; payload: MountSlotPayload }
   | { type: "data_patch"; payload: DataPatchPayload }
   | { type: "log_line"; payload: LogLine }
-  | { type: "trace"; payload: TracePayload };
+  | { type: "trace"; payload: TracePayload }
+  | { type: "recording_action"; payload: RecordingActionPayload };
 
 export type UserMessagePayload = {
   text: string;
@@ -138,7 +155,8 @@ export type ClientToServerEnvelope =
   | { type: "user_message"; payload: UserMessagePayload }
   | { type: "ui_submit"; payload: UiSubmitPayload }
   | { type: "client_log"; payload: ClientLogPayload }
-  | { type: "callback_invoke"; payload: CallbackInvokePayload };
+  | { type: "callback_invoke"; payload: CallbackInvokePayload }
+  | { type: "recording_action_done"; payload: RecordingActionDonePayload };
 
 export type ParsedClientEnvelope =
   | { ok: true; raw: string; envelope: ClientToServerEnvelope }
@@ -251,6 +269,11 @@ function mapClientPayload(
       }
       const args = Array.isArray(payload.args) ? payload.args : [];
       return { type: "callback_invoke", payload: { mountId, name, args } };
+    }
+    case "recording_action_done": {
+      const actionId = asNonEmptyString(payload.actionId);
+      if (!actionId) return undefined;
+      return { type: "recording_action_done", payload: { actionId } };
     }
     default:
       return undefined;

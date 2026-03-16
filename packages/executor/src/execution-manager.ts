@@ -25,6 +25,7 @@ export class ExecutionManager {
         ...skills,
       },
       jsx: true,
+      timeout: 300_000,
     });
   }
 

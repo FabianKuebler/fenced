@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, type FormEvent, type KeyboardEvent } from "react";
+import { useState, useRef, useEffect, forwardRef, useImperativeHandle, type FormEvent, type KeyboardEvent } from "react";
 import { useLocalStorage } from "react-use";
 
 type ChatComposerProps = {
@@ -6,21 +6,52 @@ type ChatComposerProps = {
   disabled: boolean;
 };
 
+export type ChatComposerHandle = {
+  typeChar: (char: string) => void;
+  submit: () => void;
+};
+
 const HISTORY_KEY = "chat-input-history";
 const MAX_HISTORY = 50;
 
-export function ChatComposer({ onSubmit, disabled }: ChatComposerProps) {
+export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(function ChatComposer({ onSubmit, disabled }, ref) {
   const [draft, setDraft] = useState("");
+  const draftRef = useRef("");
   const [history = [], setHistory] = useLocalStorage<string[]>(HISTORY_KEY, []);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const draftBeforeNavigationRef = useRef<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Keep draftRef in sync
+  useEffect(() => { draftRef.current = draft; }, [draft]);
 
   // Reset history index when history changes externally
   useEffect(() => {
     setHistoryIndex(-1);
     draftBeforeNavigationRef.current = null;
   }, [history.length]);
+
+  useImperativeHandle(ref, () => ({
+    typeChar: (char: string) => {
+      setDraft(prev => {
+        const next = prev + char;
+        draftRef.current = next;
+        return next;
+      });
+    },
+    submit: () => {
+      const text = draftRef.current.trim();
+      if (!text) return;
+      const newHistory = [...(history || []), text];
+      if (newHistory.length > MAX_HISTORY) newHistory.shift();
+      setHistory(newHistory);
+      setDraft("");
+      draftRef.current = "";
+      setHistoryIndex(-1);
+      draftBeforeNavigationRef.current = null;
+      onSubmit(text);
+    },
+  }));
 
   const handleSubmit = (event?: FormEvent<HTMLFormElement>) => {
     event?.preventDefault();
@@ -122,4 +153,4 @@ export function ChatComposer({ onSubmit, disabled }: ChatComposerProps) {
       </div>
     </form>
   );
-}
+});

@@ -1,8 +1,8 @@
-import React, { Component, useMemo, useReducer, useRef } from "react";
+import React, { Component, createContext, useContext, useEffect, useMemo, useReducer, useRef } from "react";
 import { proxy, useSnapshot } from "valtio";
 import * as Mui from "@mui/material";
 import type { JsonSchema } from "@fenced/shared";
-import { buildOutputBinder, type OutputBinder } from "./binder";
+import { buildOutputBinder, seedBinderValues, type OutputBinder } from "./binder";
 
 export type { OutputBinder } from "./binder";
 
@@ -12,6 +12,7 @@ export type ComponentRenderProps = {
   streamedData?: Record<string, unknown> | null;
   outputSchema: JsonSchema;
   callbackNames?: string[];
+  slots?: Record<string, string>;
   onSubmit?: (value: unknown) => void;
   onCallbackInvoke?: (name: string, args: unknown[]) => void;
 };
@@ -37,12 +38,61 @@ const useValtioSource = (value: Record<string, unknown>): Record<string, unknown
 };
 
 // ============================================================================
+// Slot System
+// ============================================================================
+
+type SlotContextValue = {
+  slots: Record<string, UiFunction | null>;
+  props: UiProps;
+};
+
+const SlotContext = createContext<SlotContextValue | null>(null);
+
+function Slot({ name, fallback }: { name: string; fallback?: React.ReactNode }): React.ReactNode {
+  const ctx = useContext(SlotContext);
+  if (!ctx) return fallback ?? null;
+
+  const slotUi = ctx.slots[name];
+  if (!slotUi) return fallback ?? null;
+
+  return (
+    <SlotErrorBoundary name={name}>
+      {slotUi(ctx.props)}
+    </SlotErrorBoundary>
+  );
+}
+
+class SlotErrorBoundary extends Component<
+  { name: string; children: React.ReactNode },
+  { error: Error | null }
+> {
+  override state = { error: null as Error | null };
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  override render() {
+    if (this.state.error) {
+      return (
+        <div style={{ padding: 8, color: "#d32f2f", fontSize: 13 }}>
+          Slot &ldquo;{this.props.name}&rdquo; failed: {this.state.error.message}
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+// ============================================================================
 // UI Compilation
 // ============================================================================
 
-// Collect MUI component names and values for injection
-const muiComponentNames = Object.keys(Mui);
-const muiComponentValues = Object.values(Mui);
+// Collect MUI component names and values for injection.
+// Filter out "Slot" to prevent shadowing our Slot component if MUI ever exports one.
+const muiEntries = Object.entries(Mui).filter(([name]) => name !== "Slot");
+const muiComponentNames = muiEntries.map(([name]) => name);
+const muiComponentValues = muiEntries.map(([, value]) => value);
 
 type UiProps = {
   data: Record<string, unknown>;
@@ -57,14 +107,16 @@ const compileUi = (source: string): UiFunction | null => {
   try {
     const factory = new Function(
       "React",
+      "Slot",
       ...muiComponentNames,
       `return ${source};`,
     ) as (
       reactObj: typeof React,
+      slotComponent: typeof Slot,
       ...components: unknown[]
     ) => UiFunction;
 
-    return factory(React, ...muiComponentValues);
+    return factory(React, Slot, ...muiComponentValues);
   } catch (error) {
     console.error("Failed to compile UI source", error);
     return null;
@@ -134,6 +186,7 @@ function ComponentRenderInner({
   streamedData,
   outputSchema,
   callbackNames,
+  slots: slotSources,
   onSubmit,
   onCallbackInvoke,
 }: ComponentRenderProps) {
@@ -151,6 +204,14 @@ function ComponentRenderInner({
     () => buildOutputBinder(outputSchema, forceUpdate, (value) => onSubmitRef.current?.(value)),
     [outputSchema],
   );
+
+  // Seed output binder fields from streamedData (for pre-filled forms)
+  useEffect(() => {
+    if (streamedData && Object.keys(streamedData).length > 0) {
+      seedBinderValues(outputBinder, streamedData);
+      forceUpdate();
+    }
+  }, [streamedData, outputBinder]);
 
   // Wrap binder to inject onSubmit into Form components
   const wrappedBinder = useMemo(() => {
@@ -178,11 +239,27 @@ function ComponentRenderInner({
 
   const ui = useMemo(() => compileUi(source), [source]);
 
+  // Compile slot sources into UI functions
+  const compiledSlots = useMemo(() => {
+    if (!slotSources) return {};
+    const result: Record<string, UiFunction | null> = {};
+    for (const [name, src] of Object.entries(slotSources)) {
+      result[name] = compileUi(src);
+    }
+    return result;
+  }, [slotSources]);
+
   if (typeof ui !== "function") {
     return <p style={{ color: "#d32f2f" }}>Unable to compile UI payload.</p>;
   }
 
-  return <>{ui({ data: dataProxy, streamedData: streamedDataProxy, output: wrappedBinder, callbacks: callbacksProxy })}</>;
+  const uiProps: UiProps = { data: dataProxy, streamedData: streamedDataProxy, output: wrappedBinder, callbacks: callbacksProxy };
+
+  return (
+    <SlotContext.Provider value={{ slots: compiledSlots, props: uiProps }}>
+      {ui(uiProps)}
+    </SlotContext.Provider>
+  );
 }
 
 export function ComponentRender(props: ComponentRenderProps) {

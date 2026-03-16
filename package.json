@@ -11,9 +11,10 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "tmux split-window -h 'bun run dev:server' && bun run dev:client",
+    "dev": "concurrently -n server,client -c blue,green \"bun run dev:server\" \"bun run dev:client\"",
     "dev:client": "bun --cwd=apps/client run dev",
     "dev:server": "bun run --watch apps/server/index.ts",
+    "dev:recording": "sh -c 'concurrently -n server,client -c blue,green \"bun run dev:server -- --play-recording=$0\" \"bun run dev:client\"'",
     "lint": "bun --cwd=apps/client run lint && bun --cwd=apps/server run lint",
     "build": "bun --cwd=apps/client vite build",
     "google:renew-token": "bun run ./packages/skills/src/google-auth/renew-token.ts",
@@ -25,7 +26,9 @@
     "@types/bun": "latest",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
-    "bun-streaming-exec": "^0.1.1"
+    "bun-streaming-exec": "^0.1.1",
+    "concurrently": "^9.2.1",
+    "playwright": "^1.58.2"
   },
   "peerDependencies": {
     "typescript": "^5.9.3"
