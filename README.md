@@ -6,6 +6,8 @@ A prototype of an agentic chat runtime where markdown is the protocol. The LLM s
 
 📖 **Read the accompanying article:** [The Future of Agentic AI Assistants Is... Markdown](https://fabian-kuebler.com/posts/agentic-ai-markdown/)
 
+![fenced screenshot](screenshot.png)
+
 ## Quick Start with Docker
 
 ```bash
